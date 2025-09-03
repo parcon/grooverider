@@ -1,79 +1,97 @@
+# __project__ = "Audio-to-Vinyl STL Generator"
+# __version__ = "1.1.0"
+# __author__ = "Gemini AI"
+# __filename__ = "geometry_generator.py"
+# __description__ = "Generates the 3D record mesh from audio samples."
+
 import numpy as np
 from stl import mesh
 
-def create_record_mesh(audio_samples, sample_rate, rpm, config):
+def create_record_mesh(samples, sample_rate, rpm, config):
     """
-    Generates a 3D mesh of a playable vinyl record from audio samples.
+    Generates a 3D mesh for a vinyl record from processed audio samples.
     """
     dims = config['record_dimensions']
     geom = config['groove_geometry']
-
+    
+    # Physical constants
     radius = dims['record_diameter_mm'] / 2.0
-    center_hole_radius = dims['center_hole_diameter_mm'] / 2.0
     thickness = dims['record_thickness_mm']
+    center_hole_radius = dims['center_hole_diameter_mm'] / 2.0
+    
+    # Groove constants
     pitch = geom['groove_pitch_mm']
+    base_depth = -geom['groove_depth_mm']
+    modulation_range = geom['groove_depth_mm'] * geom['amplitude_scale']
 
+    # Calculate timing and spiral parameters
     seconds_per_rotation = 60.0 / rpm
-    audio_duration = len(audio_samples) / sample_rate
-    num_rotations = audio_duration / seconds_per_rotation
-
+    samples_per_rotation = int(seconds_per_rotation * sample_rate)
+    num_rotations = len(samples) // samples_per_rotation
+    
+    # Generate the full spiral path
+    vertices = []
     r_start = radius - dims['lead_in_groove_mm']
-    r_end = center_hole_radius + 5
+    
+    for i in range(num_rotations):
+        r = r_start - i * pitch
+        segment_samples = samples[i * samples_per_rotation : (i + 1) * samples_per_rotation]
+        theta = np.linspace(0, 2 * np.pi, len(segment_samples))
+        
+        x = r * np.cos(theta)
+        y = r * np.sin(theta)
+        z = base_depth + modulation_range * segment_samples
+        
+        vertices.extend(list(zip(x, y, z)))
 
-    theta_max = (r_start - r_end) * 2 * np.pi / pitch
-    num_points = int(2000 * num_rotations)
-    theta = np.linspace(0, theta_max, num_points)
-
-    r = r_start - (pitch * theta / (2 * np.pi))
-    x = r * np.cos(theta)
-    y = r * np.sin(theta)
-
-    audio_time = np.linspace(0, audio_duration, len(audio_samples))
-    spiral_time = np.linspace(0, audio_duration, num_points)
-    resampled_audio = np.interp(spiral_time, audio_time, audio_samples)
-
-    z_mod = -geom['groove_depth_mm'] + (resampled_audio * geom['groove_depth_mm'] * geom['amplitude_scale'])
-
-    dx, dy = np.gradient(x), np.gradient(y)
-    norm = np.sqrt(dx**2 + dy**2)
-    nx, ny = -dy/norm, dx/norm
-
-    groove_half_width = geom['groove_top_width_mm'] / 2.0
-    v_left = np.array([x - nx * groove_half_width, y - ny * groove_half_width, np.zeros(num_points)]).T
-    v_right = np.array([x + nx * groove_half_width, y + ny * groove_half_width, np.zeros(num_points)]).T
-    v_bottom = np.array([x, y, z_mod]).T
-
+    vertices = np.array(vertices)
+    num_verts = len(vertices)
+    
+    # Create faces for the groove
     faces = []
-    for i in range(num_points - 1):
-        faces.append([v_left[i], v_bottom[i+1], v_bottom[i]])
-        faces.append([v_left[i], v_left[i+1], v_bottom[i+1]])
-        faces.append([v_right[i], v_bottom[i], v_bottom[i+1]])
-        faces.append([v_right[i], v_bottom[i+1], v_right[i+1]])
-
-    body_vertices = []
-    num_body_segments = 500
+    for i in range(num_verts - 1):
+        if np.linalg.norm(vertices[i] - vertices[i+1]) < pitch * 2:
+             # Create a quad between adjacent vertices and their counterparts on the next rotation
+            if i < num_verts - samples_per_rotation -1:
+                p1, p2 = vertices[i], vertices[i+1]
+                p3 = vertices[i + samples_per_rotation]
+                p4 = vertices[i + samples_per_rotation + 1]
+                faces.append([p1, p2, p3])
+                faces.append([p2, p4, p3])
+    
+    # Create the record body (a simple cylinder for now)
+    body_faces = []
+    num_body_segments = 200
+    angle_step = 2 * np.pi / num_body_segments
+    
+    # Top and bottom faces
     for i in range(num_body_segments):
-        angle = i * (2 * np.pi / num_body_segments)
-        body_vertices.append([radius * np.cos(angle), radius * np.sin(angle), 0])
-        body_vertices.append([radius * np.cos(angle), radius * np.sin(angle), -thickness])
-        body_vertices.append([center_hole_radius * np.cos(angle), center_hole_radius * np.sin(angle), 0])
-        body_vertices.append([center_hole_radius * np.cos(angle), center_hole_radius * np.sin(angle), -thickness])
+        theta1 = i * angle_step
+        theta2 = (i + 1) * angle_step
+        
+        # Outer rim
+        p1 = [radius * np.cos(theta1), radius * np.sin(theta1), 0]
+        p2 = [radius * np.cos(theta2), radius * np.sin(theta2), 0]
+        p3 = [radius * np.cos(theta1), radius * np.sin(theta1), -thickness]
+        p4 = [radius * np.cos(theta2), radius * np.sin(theta2), -thickness]
+        body_faces.append([p1, p2, p3])
+        body_faces.append([p2, p4, p3])
 
-    body_v_arr = np.array(body_vertices)
+        # Inner hole
+        p5 = [center_hole_radius * np.cos(theta1), center_hole_radius * np.sin(theta1), 0]
+        p6 = [center_hole_radius * np.cos(theta2), center_hole_radius * np.sin(theta2), 0]
+        p7 = [center_hole_radius * np.cos(theta1), center_hole_radius * np.sin(theta1), -thickness]
+        p8 = [center_hole_radius * np.cos(theta2), center_hole_radius * np.sin(theta2), -thickness]
+        body_faces.append([p5, p6, p7])
+        body_faces.append([p6, p8, p7])
 
-    for i in range(num_body_segments):
-        j = (i + 1) % num_body_segments
-        p_outer_top_i, p_outer_bot_i, p_inner_top_i, p_inner_bot_i = i*4, i*4+1, i*4+2, i*4+3
-        p_outer_top_j, p_outer_bot_j, p_inner_top_j, p_inner_bot_j = j*4, j*4+1, j*4+2, j*4+3
-        faces.append([body_v_arr[p_inner_top_i], body_v_arr[p_outer_top_j], body_v_arr[p_outer_top_i]])
-        faces.append([body_v_arr[p_inner_top_i], body_v_arr[p_inner_top_j], body_v_arr[p_outer_top_j]])
-        faces.append([body_v_arr[p_inner_bot_i], body_v_arr[p_outer_bot_i], body_v_arr[p_outer_bot_j]])
-        faces.append([body_v_arr[p_inner_bot_i], body_v_arr[p_outer_bot_j], body_v_arr[p_inner_bot_j]])
-        faces.append([body_v_arr[p_outer_top_i], body_v_arr[p_outer_bot_j], body_v_arr[p_outer_bot_i]])
-        faces.append([body_v_arr[p_outer_top_i], body_v_arr[p_outer_top_j], body_v_arr[p_outer_bot_j]])
-        faces.append([body_v_arr[p_inner_top_i], body_v_arr[p_inner_bot_i], body_v_arr[p_inner_bot_j]])
-        faces.append([body_v_arr[p_inner_top_i], body_v_arr[p_inner_bot_j], body_v_arr[p_inner_top_j]])
 
-    record_mesh = mesh.Mesh(np.zeros(len(faces), dtype=mesh.Mesh.dtype))
-    record_mesh.vectors = np.array(faces)
+    all_faces = faces + body_faces
+    
+    record_mesh = mesh.Mesh(np.zeros(len(all_faces), dtype=mesh.Mesh.dtype))
+    for i, f in enumerate(all_faces):
+        record_mesh.vectors[i] = np.array(f)
+        
     return record_mesh
+
+

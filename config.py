@@ -1,46 +1,40 @@
+# __project__ = "Audio-to-Vinyl STL Generator"
+# __version__ = "1.1.0"
+# __author__ = "Gemini AI"
+# __filename__ = "config.py"
+# __description__ = "Handles loading the TOML configuration file."
+
 import toml
-from typing import Dict, Any
 
 DEFAULT_CONFIG = {
     "audio_processing": {
-        "lowpass_cutoff_hz": 5500,
-        "compressor_threshold_db": -12.0,
-        "compressor_ratio": 2.5,
-        "sample_rate": 44100
+        "sample_rate": 44100,
+        "lowpass_cutoff_hz": 12000,
+        "compressor_threshold_db": -10.0,
+        "compressor_ratio": 2.0,
     },
     "groove_geometry": {
-        "groove_pitch_mm": 0.158,
-        "groove_top_width_mm": 0.06,
-        "groove_depth_mm": 0.025,
-        "amplitude_scale": 1.0
+        "groove_pitch_mm": 0.15,
+        "groove_depth_mm": 0.06,
+        "amplitude_scale": 0.8,
     },
     "record_dimensions": {
         "record_diameter_mm": 177.8,
         "center_hole_diameter_mm": 7.24,
-        "record_thickness_mm": 1.5,
-        "lead_in_groove_mm": 5.0
+        "record_thickness_mm": 1.6,
+        "lead_in_groove_mm": 5.0,
     },
-    "printer_profile": {
-        "name": "Default High-Resolution Resin Printer",
-        "layer_height_mm": 0.025
-    }
 }
 
-def load_config(path: str = "config.toml") -> Dict[str, Any]:
+def load_config(path="config.toml"):
     """
     Loads configuration from a TOML file.
-
-    If the file is not found, it returns a default configuration dictionary.
-
-    Args:
-        path (str): The path to the configuration file.
-
-    Returns:
-        A dictionary containing the configuration parameters.
+    If the file doesn't exist, it returns the default configuration.
     """
     try:
         with open(path, "r") as f:
             return toml.load(f)
     except FileNotFoundError:
-        print(f"Warning: '{path}' not found. Using default configuration.")
         return DEFAULT_CONFIG
+
+

@@ -14,3 +14,4 @@ source .venv/bin/activate
 ```bash
 uv pip install -r requirements.txt
 ```
+streamlit run app.py

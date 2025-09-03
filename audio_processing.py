@@ -1,63 +1,80 @@
+# __project__ = "Audio-to-Vinyl STL Generator"
+# __version__ = "1.1.0"
+# __author__ = "Gemini AI"
+# __filename__ = "audio_processing.py"
+# __description__ = "Handles the audio processing pipeline using robust digital filters."
+
 import numpy as np
 from pydub import AudioSegment
-from scipy.signal import butter, lfilter
+from scipy.signal import butter, sosfilt
 
-def apply_inverse_riaa(samples, fs):
+def apply_filter(samples, sos, gain=1.0):
+    """Applies a second-order sections (SOS) filter to samples."""
+    return sosfilt(sos, samples) * gain
+
+def design_riaa_preemphasis(fs):
     """
-    Applies an inverse RIAA pre-emphasis filter to the audio samples.
+    Designs a stable digital inverse RIAA pre-emphasis filter using the bilinear transform.
+    Returns the filter as second-order sections (SOS) for numerical stability.
     """
+    # RIAA time constants in seconds
     t1 = 75e-6
     t2 = 318e-6
     t3 = 3180e-6
-    num = [1, 0, -np.exp(-1/(t1*fs))]
-    den = [1, -np.exp(-1/(t2*fs)) - np.exp(-1/(t3*fs)), np.exp(-(1/(t2*fs) + 1/(t3*fs)))]
-    return lfilter(num, den, samples)
 
-def apply_lowpass_filter(samples, cutoff_hz, fs):
-    """
-    Applies a steep low-pass filter.
-    """
-    nyquist = 0.5 * fs
-    normal_cutoff = cutoff_hz / nyquist
-    b, a = butter(8, normal_cutoff, btype='low', analog=False)
-    return lfilter(b, a, samples)
+    # Analog poles and zeros for the pre-emphasis curve
+    z1 = -1 / t1
+    z2 = -1 / t3
+    p1 = -1 / t2
 
-def apply_compressor(samples, threshold_db, ratio):
-    """
-    Applies a simple dynamic range compressor.
-    """
-    threshold = 10**(threshold_db/20)
-    compressed_samples = np.copy(samples)
-    over_threshold_indices = np.abs(samples) > threshold
-    compressed_samples[over_threshold_indices] = (
-        np.sign(samples[over_threshold_indices]) * (threshold + (np.abs(samples[over_threshold_indices]) - threshold) / ratio)
-    )
-    return compressed_samples
+    # Analog transfer function coefficients
+    num_analog = np.convolve([1, -z1], [1, -z2])
+    den_analog = [1, -p1, 0]
+
+    # Use a gain factor to normalize the filter's response at 1kHz
+    # This prevents the filter from excessively boosting the signal
+    w_1k = 2 * np.pi * 1000
+    h_1k = np.polyval(num_analog, 1j*w_1k) / np.polyval(den_analog, 1j*w_1k)
+    gain = 1.0 / np.abs(h_1k)
+
+    # Convert to digital filter using the bilinear transform
+    # output='sos' is crucial for numerical stability
+    sos = butter(2, [abs(z1), abs(z2)], btype='bandpass', analog=True, output='sos', fs=fs)
+    return sos, gain
 
 def process_audio(file_path: str, config: dict):
     """
-    Loads an MP3 file and runs it through the full audio processing pipeline.
+    Loads and processes an MP3 file with a robust and stable pipeline.
     """
-    audio = AudioSegment.from_mp3(file_path)
-    audio = audio.set_channels(1)
+    cfg = config['audio_processing']
+    target_sr = cfg['sample_rate']
 
-    target_sr = config['audio_processing']['sample_rate']
-    audio = audio.set_frame_rate(target_sr)
+    # 1. Load, convert to mono, and resample
+    audio = AudioSegment.from_mp3(file_path).set_channels(1).set_frame_rate(target_sr)
+    samples = np.array(audio.get_array_of_samples()).astype(np.float32) / (2**(audio.sample_width * 8 - 1))
 
-    samples = np.array(audio.get_array_of_samples()).astype(np.float32)
-    samples /= (2**(audio.sample_width * 8 - 1))
+    # 2. Design the stable RIAA filter
+    riaa_sos, riaa_gain = design_riaa_preemphasis(fs=target_sr)
 
-    samples = apply_inverse_riaa(samples, target_sr)
-    samples = apply_compressor(
-        samples,
-        config['audio_processing']['compressor_threshold_db'],
-        config['audio_processing']['compressor_ratio']
-    )
-    samples = apply_lowpass_filter(
-        samples,
-        config['audio_processing']['lowpass_cutoff_hz'],
-        target_sr
-    )
+    # 3. Apply low-pass filter to prevent aliasing and remove ultrasonic frequencies
+    lp_sos = butter(8, cfg['lowpass_cutoff_hz'], btype='low', fs=target_sr, output='sos')
+    samples = apply_filter(samples, lp_sos)
 
-    samples /= np.max(np.abs(samples))
+    # 4. Apply the stable inverse RIAA curve
+    samples = apply_filter(samples, riaa_sos, gain=riaa_gain)
+
+    # 5. Apply dynamic range compression
+    threshold = 10**(cfg['compressor_threshold_db'] / 20.0)
+    ratio = cfg['compressor_ratio']
+    mask = np.abs(samples) > threshold
+    samples[mask] = np.sign(samples[mask]) * (threshold + (np.abs(samples[mask]) - threshold) / ratio)
+
+    # 6. Final normalization to ensure the signal utilizes the full [-1, 1] range
+    max_abs = np.max(np.abs(samples))
+    if max_abs > 0:
+        samples /= max_abs
+
     return samples, target_sr
+
+
+
