@@ -1,0 +1,8 @@
+streamlit
+numpy
+pydub
+numpy-stl
+toml
+scipy
+pytest
+matplotlib
