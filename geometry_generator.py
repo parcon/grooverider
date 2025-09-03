@@ -1,116 +1,119 @@
-# __project__ = "Audio-to-Vinyl STL Generator"
-__version__ = "1.5.1"
-__author__ = "Gemini AI"
-__filename__ = "geometry_generator.py"
-# __description__ = "Generates a single, solid, manifold 3D mesh for the vinyl record."
+# Groove Rider
+# Copyright (c) 2024
+#
+# This script is responsible for generating the 3D geometry of the vinyl record
+# from the processed audio data. It uses numpy-stl to create the mesh.
 
 import numpy as np
 from stl import mesh
-from scipy.spatial import KDTree
+from config import AppConfig
 
-def create_record_mesh(samples, sample_rate, rpm, config):
+def create_record_geometry(samples: np.ndarray, cfg: AppConfig) -> mesh.Mesh:
     """
-    Generates a single, manifold, solid 3D mesh for a vinyl record by
-    creating a clean topology and displacing the top vertices for the groove.
+    Generates the 3D mesh for a vinyl-style record from audio samples by
+    building a single, unified list of vertices and faces.
     """
-    dims = config['record_dimensions']
-    geom = config['groove_geometry']
+    # --- Configuration Parameters ---
+    record_config = cfg.config['record']
+    audio_config = cfg.config['audio']
+    
+    record_radius = record_config['diameter'] / 2
+    thickness = record_config['thickness']
+    hole_radius = record_config['hole_diameter'] / 2
+    groove_width = record_config['groove_width']
+    groove_depth = record_config['groove_depth']
+    amplitude_scale = audio_config.get('amplitude_scale', 1.0)
 
-    # --- Disc Parameters ---
-    radius = dims['record_diameter_mm'] / 2.0
-    hole_radius = dims['center_hole_diameter_mm'] / 2.0
-    thickness = dims['record_thickness_mm']
-    
-    # --- Spiral Path for Groove Centerline (used for displacement) ---
-    r_start = radius - dims['lead_in_groove_mm']
-    total_samples = len(samples)
-    seconds_per_rotation = 60.0 / rpm
-    samples_per_rotation = int(sample_rate * seconds_per_rotation)
-    total_rotations = total_samples / samples_per_rotation
-    r_end = r_start - (total_rotations * geom['groove_pitch_mm'])
-    
-    theta_spiral = np.linspace(0, total_rotations * 2 * np.pi, num=total_samples)
-    r_spiral = np.linspace(r_start, r_end, num=total_samples)
-    x_spiral = r_spiral * np.cos(theta_spiral)
-    y_spiral = r_spiral * np.sin(theta_spiral)
-    
-    amplitude = geom['amplitude_scale'] * geom['groove_depth_mm']
-    z_spiral_center = -geom['groove_depth_mm'] + (samples * amplitude)
+    # Define track area
+    outer_radius = record_radius - record_config.get('lead_in_width', 5)
+    inner_radius = hole_radius + record_config.get('lead_out_width', 5)
+    track_width = outer_radius - inner_radius
 
-    spiral_tree = KDTree(np.column_stack([x_spiral, y_spiral]))
+    # --- 1. Generate Base Disc Vertices & Faces ---
+    all_vertices = []
+    all_faces = []
+    
+    num_sides_disc = 200
+    angles = np.linspace(0, 2 * np.pi, num_sides_disc, endpoint=False)
 
-    # --- Generate a High-Resolution Grid of Vertices ---
-    num_radial_steps = 300
-    num_angular_steps = 720
-    
-    radii = np.linspace(hole_radius, radius, num_radial_steps)
-    thetas = np.linspace(0, 2 * np.pi, num_angular_steps, endpoint=False) # Important: no endpoint
-    
-    R, T = np.meshgrid(radii, thetas)
-    X = R * np.cos(T)
-    Y = R * np.sin(T)
-    Z = np.zeros_like(X)
+    # Add outer-ring vertices (top and bottom)
+    for angle in angles:
+        x, y = record_radius * np.cos(angle), record_radius * np.sin(angle)
+        all_vertices.append([x, y, thickness / 2])
+        all_vertices.append([x, y, -thickness / 2])
 
-    # --- Displace Top Vertices to Create the Groove ---
-    top_verts_flat = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T
-    distances, indices = spiral_tree.query(top_verts_flat[:, :2])
-    
-    groove_width = geom['groove_pitch_mm'] * 0.7
-    mask = distances < groove_width
-    displacement = (z_spiral_center[indices[mask]]) * (1 - distances[mask] / groove_width)
-    top_verts_flat[mask, 2] = displacement
-    
-    # --- Create Full Set of Vertices (Top and Bottom) ---
-    bottom_verts_flat = top_verts_flat.copy()
-    bottom_verts_flat[:, 2] -= thickness
-    all_verts = np.vstack([top_verts_flat, bottom_verts_flat])
-    
-    # --- Generate Faces for a Solid, Manifold Mesh ---
-    faces = []
-    num_verts_per_surface = X.size
-    
-    # Generate faces for the top and bottom surfaces
-    for j in range(num_angular_steps):
-        j_next = (j + 1) % num_angular_steps
-        for i in range(num_radial_steps - 1):
-            p1 = j * num_radial_steps + i
-            p2 = j * num_radial_steps + (i + 1)
-            p3 = j_next * num_radial_steps + (i + 1)
-            p4 = j_next * num_radial_steps + i
-            
-            faces.append([p1, p3, p2])
-            faces.append([p1, p4, p3])
-            
-            p1b, p2b, p3b, p4b = p1 + num_verts_per_surface, p2 + num_verts_per_surface, p3 + num_verts_per_surface, p4 + num_verts_per_surface
-            faces.append([p1b, p2b, p3b])
-            faces.append([p1b, p3b, p4b])
+    # Add inner-hole vertices (top and bottom)
+    for angle in angles:
+        x, y = hole_radius * np.cos(angle), hole_radius * np.sin(angle)
+        all_vertices.append([x, y, thickness / 2])
+        all_vertices.append([x, y, -thickness / 2])
 
-    # Generate faces for the inner and outer walls
-    for j in range(num_angular_steps):
-        j_next = (j + 1) % num_angular_steps
+    # Create faces for disc walls and surfaces
+    for i in range(num_sides_disc):
+        next_i = (i + 1) % num_sides_disc
         
-        # Outer wall
-        p1 = j * num_radial_steps + (num_radial_steps - 1)
-        p2 = j_next * num_radial_steps + (num_radial_steps - 1)
-        p1b = p1 + num_verts_per_surface
-        p2b = p2 + num_verts_per_surface
-        faces.append([p1, p2b, p2])
-        faces.append([p1, p1b, p2b])
+        # Outer wall faces
+        all_faces.append([i * 2, next_i * 2, i * 2 + 1])
+        all_faces.append([next_i * 2, next_i * 2 + 1, i * 2 + 1])
         
-        # Inner wall
-        p1 = j * num_radial_steps
-        p2 = j_next * num_radial_steps
-        p1b = p1 + num_verts_per_surface
-        p2b = p2 + num_verts_per_surface
-        faces.append([p1, p2, p2b])
-        faces.append([p1, p2b, p1b])
+        # Inner wall faces
+        off = num_sides_disc * 2
+        all_faces.append([off + i * 2, off + i * 2 + 1, off + next_i * 2])
+        all_faces.append([off + next_i * 2, off + i * 2 + 1, off + next_i * 2 + 1])
+        
+        # Top surface faces
+        all_faces.append([i * 2, off + i * 2, off + next_i * 2])
+        all_faces.append([i * 2, off + next_i * 2, next_i * 2])
+        
+        # Bottom surface faces
+        all_faces.append([i * 2 + 1, off + next_i * 2 + 1, off + i * 2 + 1])
+        all_faces.append([i * 2 + 1, next_i * 2 + 1, off + next_i * 2 + 1])
 
-    # --- Create and return the final mesh ---
-    faces = np.array(faces)
-    record_mesh = mesh.Mesh(np.zeros(faces.shape[0], dtype=mesh.Mesh.dtype))
-    for i, f in enumerate(faces):
-        for j in range(3):
-            record_mesh.vectors[i][j] = all_verts[f[j], :]
-            
-    return record_mesh
+    # --- 2. Generate Spiral Groove ---
+    num_rotations = int(track_width / groove_width)
+    total_angle = 2 * np.pi * num_rotations
+    num_points_spiral = len(samples)
+    
+    theta = np.linspace(0, total_angle, num_points_spiral)
+    r = np.linspace(outer_radius, inner_radius, num_points_spiral)
+    x = r * np.cos(theta)
+    y = r * np.sin(theta)
+    
+    z_modulation = samples * groove_depth * amplitude_scale
+    z_center = (thickness / 2) - (groove_depth / 2) - z_modulation
+
+    # --- 3. Create Groove Mesh by adding to the main vertex/face lists ---
+    for i in range(1, num_points_spiral):
+        direction = np.array([x[i] - x[i-1], y[i] - y[i-1], 0])
+        norm = np.linalg.norm(direction)
+        if norm == 0: continue
+        
+        perp = np.array([-direction[1], direction[0], 0]) / norm
+        
+        v1 = np.array([x[i-1], y[i-1], z_center[i-1]]) - perp * (groove_width / 2)
+        v2 = np.array([x[i-1], y[i-1], z_center[i-1]]) + perp * (groove_width / 2)
+        v3 = np.array([x[i], y[i], z_center[i]]) - perp * (groove_width / 2)
+        v4 = np.array([x[i], y[i], z_center[i]]) + perp * (groove_width / 2)
+
+        # Get the current length of the vertex list to use as the base index
+        idx = len(all_vertices)
+        
+        all_vertices.extend([v1, v2, v3, v4])
+        
+        # Add faces using the correct, globally incrementing base index
+        all_faces.append([idx, idx + 2, idx + 1])
+        all_faces.append([idx + 1, idx + 2, idx + 3])
+
+    # --- 4. Create the final mesh from the combined lists ---
+    vertices_np = np.array(all_vertices)
+    faces_np = np.array(all_faces)
+    
+    combined_mesh = mesh.Mesh(np.zeros(faces_np.shape[0], dtype=mesh.Mesh.dtype))
+    combined_mesh.vectors = vertices_np[faces_np]
+    
+    return combined_mesh
+
+def save_mesh_as_stl(mesh_data: mesh.Mesh, file_path: str):
+    """Saves a numpy-stl mesh object to an STL file."""
+    mesh_data.save(file_path)
 

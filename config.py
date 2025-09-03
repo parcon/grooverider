@@ -1,53 +1,44 @@
-# __project__ = "Audio-to-Vinyl STL Generator"
-__version__ = "1.2.0"
-__author__ = "Gemini AI"
-__filename__ = "config.py"
-# __description__ = "Loads and validates the application configuration from a TOML file."
+# Groove Rider
+# Copyright (c) 2024
+#
+# This script handles loading and accessing application configuration
+# from the config.toml file.
 
 import toml
+from dataclasses import dataclass, field
+from typing import Dict, Any
 
-DEFAULT_CONFIG = {
-    "audio_processing": {
-        "sample_rate": 44100,
-        "lowpass_cutoff_hz": 5500,
-        "highpass_cutoff_hz": 50,
-    },
-    "padding_ms": {
-        "lead_in": 1000,
-        "lead_out": 1000,
-    },
-    "compressor": {
-        "threshold_db": -12.0,
-        "ratio": 2.5,
-        "attack_ms": 5,
-        "release_ms": 100,
-    },
-    "groove_geometry": {
-        "bit_depth": 6,
-        "groove_pitch_mm": 0.15,
-        "amplitude_scale": 1.0,
-        "groove_depth_mm": 0.03
-    },
-    "record_dimensions": {
-        "record_diameter_mm": 177.8,
-        "center_hole_diameter_mm": 7.24,
-        "record_thickness_mm": 1.5,
-        "lead_in_groove_mm": 5.0
-    },
-    "printer_profile": {
-        "name": "Default High-Resolution Resin Printer",
-        "layer_height_mm": 0.025,
-    }
-}
-
-def load_config(path="config.toml"):
+@dataclass
+class AppConfig:
     """
-    Loads the configuration from a TOML file.
-    If the file doesn't exist, it returns the default configuration.
+    A dataclass to hold the application's configuration settings,
+    loaded from a TOML file.
     """
-    try:
-        with open(path, "r") as f:
-            return toml.load(f)
-    except FileNotFoundError:
-        return DEFAULT_CONFIG
+    record: Dict[str, Any] = field(default_factory=dict)
+    audio: Dict[str, Any] = field(default_factory=dict)
+    server: Dict[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self):
+        """
+        Loads the configuration from the TOML file after the
+        object has been initialized.
+        """
+        self._load_config()
+
+    def _load_config(self, path: str = "config.toml"):
+        """
+        Private method to parse the TOML file and populate the
+        dataclass fields.
+        """
+        try:
+            with open(path, "r") as f:
+                config_data = toml.load(f)
+                self.record = config_data.get('record', self.record)
+                self.audio = config_data.get('audio', self.audio)
+                self.server = config_data.get('server', self.server)
+        except FileNotFoundError:
+            # It's good practice to handle the case where the config file is missing
+            print(f"Warning: Configuration file '{path}' not found. Using default values.")
+        except Exception as e:
+            # Catch other potential errors during file loading
+            print(f"Error loading configuration from '{path}': {e}")
