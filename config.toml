@@ -1,25 +1,43 @@
+# __project__ = "Audio-to-Vinyl STL Generator"
+# __version__ = "1.2.0"
+# __author__ = "Gemini AI"
+# __filename__ = "config.toml"
+# __description__ = "Configuration file for the application's parameters."
+
 # Parameters for the audio pre-processing pipeline
 [audio_processing]
+sample_rate = 44100
 lowpass_cutoff_hz = 5500
-compressor_threshold_db = -12.0
-compressor_ratio = 2.5
-sample_rate = 44100             # Standard CD quality sample rate
+highpass_cutoff_hz = 50
+
+# Duration of silence to add at the beginning and end of the track
+[padding_ms]
+lead_in = 1000  # 1 second
+lead_out = 1000 # 1 second
+
+# Parameters for the dynamic range compressor
+[compressor]
+threshold_db = -12.0
+ratio = 2.5
+attack_ms = 5
+release_ms = 100
 
 # Parameters defining the physical geometry of the groove
 [groove_geometry]
-groove_pitch_mm = 0.158    # Standard for microgroove records
-groove_top_width_mm = 0.06
-groove_depth_mm = 0.025
-amplitude_scale = 1.0      # Scales the audio modulation depth
+bit_depth = 6
+groove_pitch_mm = 0.15
+amplitude_scale = 1.0
+groove_depth_mm = 0.03 # Depth of the unmodulated groove
 
-# Physical dimensions of the final record (7-inch single)
+# Physical dimensions of the final record
 [record_dimensions]
-record_diameter_mm = 177.8
+record_diameter_mm = 177.8 # 7 inches
 center_hole_diameter_mm = 7.24
 record_thickness_mm = 1.5
-lead_in_groove_mm = 5.0        # Blank space from edge to start of audio
+lead_in_groove_mm = 5.0 # Width of the silent outer groove
 
-# Assumed parameters of the target 3D printer for reference
+# Assumed parameters of the target 3D printer
 [printer_profile]
 name = "Default High-Resolution Resin Printer"
 layer_height_mm = 0.025
+
